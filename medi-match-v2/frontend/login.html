@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>MediMatch — Sign In</title>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+<div class="login-page">
+  <div class="login-box">
+    <div class="login-logo">
+      <span class="login-logo-icon">🚑</span>
+      <div class="login-logo-title">MediMatch</div>
+      <div class="login-logo-sub">Disaster Response Coordination System</div>
+    </div>
+
+    <div class="login-tabs">
+      <button class="login-tab active" id="tabUser"  onclick="switchTab('user')">Field User</button>
+      <button class="login-tab admin-tab" id="tabAdmin" onclick="switchTab('admin')">Admin / Hospital</button>
+    </div>
+
+    <div id="loginError" class="login-error" style="display:none"></div>
+
+    <div class="form-group">
+      <label class="form-label">Username</label>
+      <input id="inputUsername" class="form-input" type="text" placeholder="Enter your username" autocomplete="username"/>
+    </div>
+    <div class="form-group" style="margin-bottom:18px">
+      <label class="form-label">Password</label>
+      <input id="inputPassword" class="form-input" type="password" placeholder="Enter your password" autocomplete="current-password"/>
+    </div>
+
+    <button class="btn btn-primary" id="loginBtn" style="width:100%;justify-content:center;padding:10px" onclick="doLogin()">
+      Sign In
+    </button>
+
+    <div class="login-hint">
+      Demo — User: <code>user1</code> / <code>user123</code> &nbsp;&nbsp; Admin: <code>admin</code> / <code>admin123</code>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '';
+let activeTab = 'user';
+
+function switchTab(tab) {
+  activeTab = tab;
+  document.getElementById('tabUser').classList.toggle('active', tab === 'user');
+  document.getElementById('tabAdmin').classList.toggle('active', tab === 'admin');
+  document.getElementById('loginError').style.display = 'none';
+}
+
+async function doLogin() {
+  const username = document.getElementById('inputUsername').value.trim();
+  const password = document.getElementById('inputPassword').value;
+  const errEl = document.getElementById('loginError');
+  const btn = document.getElementById('loginBtn');
+  if (!username || !password) { showErr('Please enter username and password.'); return; }
+
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  errEl.style.display = 'none';
+
+  try {
+    const res = await fetch(`${API}/api/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (!data.success) { showErr(data.error || 'Invalid username or password.'); return; }
+    const user = data.user;
+    if (activeTab === 'admin' && user.role !== 'admin') { showErr('This account does not have admin access. Use the Field User tab.'); return; }
+    if (activeTab === 'user'  && user.role === 'admin') { showErr('Admin account detected. Please use the Admin tab.'); return; }
+    localStorage.setItem('mm_token', data.token);
+    localStorage.setItem('mm_user', JSON.stringify(user));
+    window.location.href = user.role === 'admin' ? 'index.html' : 'emergency.html';
+  } catch {
+    // Demo fallback
+    if (username === 'admin' && password === 'admin123' && activeTab === 'admin') {
+      localStorage.setItem('mm_token', 'demo_admin');
+      localStorage.setItem('mm_user', JSON.stringify({ id:'U001', username:'admin', role:'admin', full_name:'System Administrator' }));
+      window.location.href = 'index.html';
+    } else if (username === 'user1' && password === 'user123' && activeTab === 'user') {
+      localStorage.setItem('mm_token', 'demo_user');
+      localStorage.setItem('mm_user', JSON.stringify({ id:'U002', username:'user1', role:'user', full_name:'Field Operator' }));
+      window.location.href = 'emergency.html';
+    } else {
+      showErr('Cannot reach server. Check demo credentials above.');
+    }
+  } finally {
+    btn.disabled = false; btn.textContent = 'Sign In';
+  }
+}
+
+function showErr(msg) {
+  const el = document.getElementById('loginError');
+  el.textContent = msg; el.style.display = 'block';
+  document.getElementById('loginBtn').disabled = false;
+  document.getElementById('loginBtn').textContent = 'Sign In';
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+
+(function() {
+  const token = localStorage.getItem('mm_token');
+  const user  = JSON.parse(localStorage.getItem('mm_user') || 'null');
+  if (token && user) window.location.href = user.role === 'admin' ? 'index.html' : 'emergency.html';
+})();
+</script>
+</body>
+</html>

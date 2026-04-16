@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>MediMatch — Supply Management</title>
+  <link rel="stylesheet" href="style.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="sidebar-logo"><span class="logo-icon">🚑</span><div><div class="logo-title">MediMatch</div><div class="logo-sub">Disaster Response</div></div></div>
+    <div class="live-dot-row"><span class="live-dot" id="liveIndicator" style="background:#f59e0b"></span><span id="liveText">Connecting…</span></div>
+    <div class="user-badge" id="userBadge"></div>
+    <nav class="nav">
+      <div class="nav-section">Admin</div>
+      <a href="index.html"     class="nav-link" data-role="admin">📊 Command Center</a>
+      <a href="hospitals.html" class="nav-link" data-role="admin">🏥 Hospital Mgmt</a>
+      <a href="triage.html"    class="nav-link" data-role="admin">🩺 Medical Triage</a>
+      <a href="supply.html"    class="nav-link" data-role="admin">💊 Supply Mgmt</a>
+      <div class="nav-section">General</div>
+      <a href="emergency.html" class="nav-link">🚨 Request Emergency</a>
+    </nav>
+    <div style="padding:10px"><button class="btn btn-danger btn-sm" style="width:100%;justify-content:center" onclick="logout()">Sign Out</button></div>
+    <div class="sidebar-footer">MediMatch v2.0 · Neon DB</div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar-title">💊 Medicine &amp; Supply Management</div>
+      <div class="topbar-right">
+        <button class="btn btn-primary" onclick="openModal('orderModal')">+ New Order</button>
+        <button class="btn btn-outline" onclick="openModal('consumeModal')">Log Consumption</button>
+        <button class="btn btn-blue"    onclick="openModal('truckModal')">Dispatch Truck</button>
+        <span id="clockDisplay" class="clock"></span>
+      </div>
+    </header>
+
+    <div class="content">
+      <div class="stats-row">
+        <div class="stat-card"><div class="stat-label">Medicine Types</div><div class="stat-value" id="statItems">—</div></div>
+        <div class="stat-card critical"><div class="stat-label">Low Stock</div><div class="stat-value" id="statLow">—</div><div class="stat-sub">below threshold</div></div>
+        <div class="stat-card"><div class="stat-label">Pending Orders</div><div class="stat-value" id="statPending" style="color:var(--amber)">—</div></div>
+        <div class="stat-card critical"><div class="stat-label">Critical Orders</div><div class="stat-value" id="statCritOrders">—</div></div>
+        <div class="stat-card"><div class="stat-label">Deliveries Planned</div><div class="stat-value" id="statDeliveries" style="color:var(--green)">—</div></div>
+      </div>
+
+      <!-- Algorithm note -->
+      <div style="background:var(--blue-bg);border:1px solid #bfdbfe;border-radius:var(--radius);padding:10px 14px;display:flex;gap:24px;flex-wrap:wrap;font-size:12px;color:#1e40af">
+        <span><strong>Truck Loading:</strong> 0/1 Knapsack (dynamic programming)</span>
+        <span><strong>Delivery Route:</strong> Greedy TSP O(n²)</span>
+        <span><strong>Road Paths:</strong> Dijkstra shortest path</span>
+        <span><strong>Order Priority:</strong> Max-priority queue</span>
+      </div>
+
+      <!-- Low stock banner -->
+      <div id="lowStockBanner"></div>
+
+      <!-- Tabs -->
+      <div style="border-bottom:1px solid var(--border);display:flex;gap:0">
+        <button class="tab-btn active" id="tabBtnCatalog"     onclick="switchTab('catalog')">Medicine Catalog</button>
+        <button class="tab-btn"        id="tabBtnOrders"      onclick="switchTab('orders')">Orders</button>
+        <button class="tab-btn"        id="tabBtnConsumption" onclick="switchTab('consumption')">Consumption Log</button>
+        <button class="tab-btn"        id="tabBtnTruck"       onclick="switchTab('truck')">Truck Dispatch</button>
+      </div>
+
+      <!-- CATALOG TAB -->
+      <div id="tabCatalog">
+        <div class="grid-2" style="gap:16px">
+          <div class="card">
+            <div class="card-title">By Category</div>
+            <div id="categorySummary"></div>
+          </div>
+          <div class="card" style="overflow-y:auto;max-height:460px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+              <div class="card-title" style="margin:0">All Medicines &amp; Consumables</div>
+              <input id="catalogSearch" class="form-input" placeholder="Search…" style="width:150px;font-size:12px;padding:5px 8px" oninput="filterCatalog()"/>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Item</th><th>Category</th><th>Stock</th><th>Threshold</th><th>Weight</th><th>Utility</th><th></th></tr></thead>
+                <tbody id="supplyTable"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ORDERS TAB -->
+      <div id="tabOrders" style="display:none">
+        <div class="card">
+          <div class="card-title">Medicine Orders — Priority Sorted</div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Order ID</th><th>Medicine</th><th>Qty</th><th>Hospital</th><th>Priority</th><th>Status</th><th>Ordered</th><th>Actions</th></tr></thead>
+              <tbody id="ordersTable"></tbody>
+            </table>
+          </div>
+          <div id="ordersEmpty" style="display:none;padding:24px;text-align:center;color:var(--muted);font-size:13px">No orders yet</div>
+        </div>
+      </div>
+
+      <!-- CONSUMPTION TAB -->
+      <div id="tabConsumption" style="display:none">
+        <div class="grid-2" style="gap:16px">
+          <div class="card" style="overflow-y:auto;max-height:460px">
+            <div class="card-title">Consumption History</div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Time</th><th>Medicine</th><th>Qty Used</th><th>Hospital</th><th>Reason</th></tr></thead>
+                <tbody id="consumptionTable"></tbody>
+              </table>
+            </div>
+            <div id="consumptionEmpty" style="display:none;padding:24px;text-align:center;color:var(--muted);font-size:13px">No consumption logged yet</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Most Used This Session</div>
+            <div id="topConsumed"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TRUCK TAB -->
+      <div id="tabTruck" style="display:none">
+        <div class="grid-2" style="gap:16px">
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <div id="truckResultPanel" style="display:none" class="card">
+              <div class="card-title" style="color:var(--green)">Truck Manifest — Optimal Load</div>
+              <div class="grid-2" style="gap:12px">
+                <div><div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:8px">Items (0/1 Knapsack)</div><div id="truckItems"></div><div id="truckUtility" style="margin-top:8px;font-size:13px;color:var(--green);font-weight:600"></div></div>
+                <div><div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:8px">Route (TSP + Dijkstra)</div><div id="truckRoute"></div></div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-title">Delivery History</div>
+              <div id="deliveriesPanel"></div>
+            </div>
+          </div>
+          <div class="card" style="padding:10px">
+            <div class="card-title">Delivery Route Map</div>
+            <div id="map" style="height:340px;border-radius:var(--radius)"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="algo-log"><div class="algo-log-title">Algorithm Log</div><div id="algoLog"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- New Order Modal -->
+<div class="modal-overlay" id="orderModal" style="display:none">
+  <div class="modal">
+    <div class="modal-header"><span class="modal-title">New Medicine Order</span><button class="modal-close" onclick="closeModal('orderModal')">✕</button></div>
+    <div class="form-group"><label class="form-label">Medicine / Supply Item *</label><select id="oSupply" class="form-select"></select></div>
+    <div class="form-group"><label class="form-label">Destination Hospital</label><select id="oHospital" class="form-select"><option value="">Central Store / Unassigned</option></select></div>
+    <div class="grid-2" style="gap:10px">
+      <div class="form-group"><label class="form-label">Quantity *</label><input id="oQty" class="form-input" type="number" min="1" value="50"/></div>
+      <div class="form-group"><label class="form-label">Priority</label>
+        <select id="oPriority" class="form-select"><option value="normal">Normal</option><option value="high">High</option><option value="critical">Critical</option></select>
+      </div>
+    </div>
+    <div class="form-group"><label class="form-label">Notes</label><textarea id="oNotes" class="form-textarea" placeholder="Clinical reason or notes…"></textarea></div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="submitOrder()">Place Order</button>
+  </div>
+</div>
+
+<!-- Log Consumption Modal -->
+<div class="modal-overlay" id="consumeModal" style="display:none">
+  <div class="modal">
+    <div class="modal-header"><span class="modal-title">Log Medicine Consumption</span><button class="modal-close" onclick="closeModal('consumeModal')">✕</button></div>
+    <div class="form-group"><label class="form-label">Medicine *</label><select id="cSupply" class="form-select"></select></div>
+    <div class="form-group"><label class="form-label">Hospital</label><select id="cHospital" class="form-select"><option value="">General</option></select></div>
+    <div class="form-group"><label class="form-label">Quantity Used *</label><input id="cQty" class="form-input" type="number" min="1" value="1"/></div>
+    <div class="form-group"><label class="form-label">Reason / Patient ID</label><input id="cReason" class="form-input" placeholder="e.g. Emergency treatment for V003"/></div>
+    <button class="btn btn-warning" style="width:100%;justify-content:center" onclick="submitConsumption()">Log Consumption</button>
+  </div>
+</div>
+
+<!-- Truck Modal -->
+<div class="modal-overlay" id="truckModal" style="display:none">
+  <div class="modal">
+    <div class="modal-header"><span class="modal-title">Dispatch Medicine Truck</span><button class="modal-close" onclick="closeModal('truckModal')">✕</button></div>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:16px">Knapsack selects optimal items by utility. TSP + Dijkstra finds the best route.</p>
+    <div class="form-group">
+      <label class="form-label">Max truck capacity: <strong id="wDisplay">50</strong> kg</label>
+      <input type="range" id="truckWeight" min="10" max="200" step="5" value="50" style="width:100%;margin-top:6px;accent-color:var(--blue)" oninput="document.getElementById('wDisplay').textContent=this.value"/>
+    </div>
+    <div class="form-group"><label class="form-label">Destination Hospitals</label>
+      <div id="truckHospCheckboxes" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px"></div>
+    </div>
+    <div class="form-group"><label class="form-label">Prioritise Categories (optional)</label>
+      <div id="catCheckboxes" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px"></div>
+    </div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:4px" onclick="doLoadTruck()">Calculate &amp; Dispatch</button>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+<script src="app.js"></script>
+<script>
+requireAuth(true);
+let suppliesData = [], hospitalsData = [];
+
+const CAT_LABELS = { analgesic:'Analgesics', cardiac_drugs:'Cardiac Drugs', antibiotic:'Antibiotics', iv_fluids:'IV Fluids', oral_fluids:'Oral Fluids', diabetes:'Diabetes', consumable:'Consumables', antidote:'Antidotes', diagnostic:'Diagnostics', wound_care:'Wound Care' };
+
+function switchTab(name) {
+  ['catalog','orders','consumption','truck'].forEach(t => {
+    const cap = t.charAt(0).toUpperCase()+t.slice(1);
+    document.getElementById('tabBtn'+cap).classList.toggle('active', t===name);
+    document.getElementById('tab'+cap).style.display = t===name?'':'none';
+  });
+  if (name==='orders')      loadOrders();
+  if (name==='consumption') loadConsumption();
+  if (name==='truck')       loadDeliveries();
+}
+
+async function loadSupplies() {
+  const r = await http.get('/api/supplies');
+  if (!r?.success) return;
+  suppliesData = r.data;
+  const low = suppliesData.filter(s => Number(s.current_stock) < Number(s.min_threshold));
+  document.getElementById('statItems').textContent = suppliesData.length;
+  document.getElementById('statLow').textContent   = low.length;
+  if (low.length) {
+    document.getElementById('lowStockBanner').innerHTML = `<div class="alert-banner">
+      <span class="alert-dot blink"></span><strong>Low Stock Alert:</strong>
+      ${low.map(s=>`<span class="tag tag-red" style="margin-left:4px">${s.name}: ${s.current_stock} ${s.unit}</span>`).join('')}
+    </div>`;
+  } else { document.getElementById('lowStockBanner').innerHTML = ''; }
+  renderCatalogTable(suppliesData);
+  renderCategorySummary();
+  populateModalSelects();
+}
+
+function renderCatalogTable(data) {
+  document.getElementById('supplyTable').innerHTML = data.map(s => {
+    const isLow  = Number(s.current_stock) < Number(s.min_threshold);
+    const pct    = Number(s.max_capacity)>0 ? Math.round((Number(s.current_stock)/Number(s.max_capacity))*100) : 0;
+    const sCol   = isLow ? 'var(--red)' : pct<40 ? 'var(--amber)' : 'var(--green)';
+    return `<tr>
+      <td style="font-weight:600">${s.name}</td>
+      <td><span class="badge badge-muted">${CAT_LABELS[s.category]||s.category}</span></td>
+      <td><span style="font-weight:600;color:${sCol}">${s.current_stock} ${s.unit}</span>${isLow?' <span class="tag tag-red">Low</span>':''}</td>
+      <td style="color:var(--muted)">${s.min_threshold}</td>
+      <td style="color:var(--muted)">${s.weight_per_unit} kg</td>
+      <td style="font-weight:600">${s.utility_value}</td>
+      <td><button class="btn btn-outline btn-sm" onclick="quickOrder('${s.id}','${s.name}')">Order</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function filterCatalog() {
+  const q = document.getElementById('catalogSearch').value.toLowerCase();
+  renderCatalogTable(suppliesData.filter(s => s.name.toLowerCase().includes(q) || (s.category||'').toLowerCase().includes(q)));
+}
+
+async function renderCategorySummary() {
+  const r = await http.get('/api/supplies/summary');
+  if (!r?.success) return;
+  document.getElementById('categorySummary').innerHTML = r.data.map(c => {
+    const total = Number(c.total_stock), thresh = Number(c.total_threshold);
+    const pct   = thresh>0 ? Math.round((total/thresh)*100) : 100;
+    const barCol= pct<80 ? '#dc2626' : '#2563eb';
+    return `<div style="padding:8px 0;border-bottom:1px solid var(--bg2)">
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+        <span style="font-weight:500">${CAT_LABELS[c.category]||c.category}</span>
+        <span style="font-size:12px;color:var(--muted)">${c.item_count} items${Number(c.low_count)>0?` &nbsp;<span style="color:var(--red);font-weight:600">${c.low_count} low</span>`:''}</span>
+      </div>
+      <div class="progress-bar"><div class="progress-fill" style="width:${Math.min(100,pct)}%;background:${barCol}"></div></div>
+    </div>`;
+  }).join('');
+}
+
+function populateModalSelects() {
+  const sOpts = suppliesData.map(s=>`<option value="${s.id}">${s.name} (${s.current_stock} ${s.unit})</option>`).join('');
+  document.getElementById('oSupply').innerHTML = sOpts;
+  document.getElementById('cSupply').innerHTML = sOpts;
+  const hOpts = hospitalsData.map(h=>`<option value="${h.id}">${h.name}</option>`).join('');
+  document.getElementById('oHospital').innerHTML = '<option value="">Central Store / Unassigned</option>' + hOpts;
+  document.getElementById('cHospital').innerHTML = '<option value="">General</option>' + hOpts;
+  document.getElementById('truckHospCheckboxes').innerHTML = hospitalsData.map(h =>
+    `<label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;padding:4px 10px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius)">
+      <input type="checkbox" value="${h.id}" class="truckHospCheck" style="accent-color:var(--blue)"/> ${h.id}
+    </label>`).join('');
+  const cats = [...new Set(suppliesData.map(s=>s.category))];
+  document.getElementById('catCheckboxes').innerHTML = cats.map(c =>
+    `<label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;padding:4px 10px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius)">
+      <input type="checkbox" value="${c}" class="catCheck" style="accent-color:var(--purple)"/> ${CAT_LABELS[c]||c}
+    </label>`).join('');
+}
+
+async function loadOrders() {
+  const r = await http.get('/api/supplies/orders');
+  if (!r?.success) return;
+  const pending  = r.data.filter(o=>o.status==='pending');
+  const critical = r.data.filter(o=>o.priority==='critical'&&o.status==='pending');
+  document.getElementById('statPending').textContent   = pending.length;
+  document.getElementById('statCritOrders').textContent= critical.length;
+  const tbody = document.getElementById('ordersTable');
+  const empty = document.getElementById('ordersEmpty');
+  if (!r.data.length) { tbody.innerHTML=''; empty.style.display=''; return; }
+  empty.style.display='none';
+  const pCol = { critical:'var(--red)', high:'var(--amber)', normal:'var(--green)' };
+  tbody.innerHTML = r.data.map(o => {
+    const col = pCol[o.priority]||'var(--muted)';
+    const actions = o.status==='pending'
+      ? `<button class="btn btn-success btn-sm" onclick="fulfil('${o.id}')">Fulfil</button> <button class="btn btn-danger btn-sm" onclick="cancelOrder('${o.id}')">Cancel</button>`
+      : statusBadge(o.status);
+    return `<tr>
+      <td style="font-size:11px;color:var(--muted)">${o.id}</td>
+      <td style="font-weight:600">${o.supply_name||'—'}</td>
+      <td style="font-weight:600;color:var(--blue)">${o.quantity} ${o.unit||''}</td>
+      <td style="color:var(--muted);font-size:12px">${o.hospital_name||'Central'}</td>
+      <td><span class="tag" style="background:${col}20;color:${col}">${o.priority?.toUpperCase()}</span></td>
+      <td>${statusBadge(o.status)}</td>
+      <td style="font-size:11px;color:var(--muted)">${o.created_at?new Date(o.created_at).toLocaleTimeString():'—'}</td>
+      <td style="white-space:nowrap">${actions}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function fulfil(id) {
+  const r = await http.patch(`/api/supplies/orders/${id}/fulfil`, {});
+  if (r?.success) { toast('Order fulfilled — stock deducted.','success'); addLog(`Order ${id} fulfilled — stock updated`); loadSupplies(); loadOrders(); }
+  else { toast(r?.error||'Failed','error'); }
+}
+
+async function cancelOrder(id) {
+  const r = await http.patch(`/api/supplies/orders/${id}/cancel`, {});
+  if (r?.success) { toast('Order cancelled.','warn'); loadOrders(); }
+  else { toast(r?.error||'Failed','error'); }
+}
+
+async function submitOrder() {
+  const supply_id=document.getElementById('oSupply').value, quantity=parseInt(document.getElementById('oQty').value), priority=document.getElementById('oPriority').value, hospital_id=document.getElementById('oHospital').value, notes=document.getElementById('oNotes').value;
+  if (!supply_id||!quantity) { toast('Select medicine and quantity.','warn'); return; }
+  const r = await http.post('/api/supplies/orders', { supply_id, hospital_id:hospital_id||undefined, quantity, priority, notes });
+  if (r?.success) { closeModal('orderModal'); toast(`Order placed: ${r.data.supply_name} × ${quantity} [${priority}]`,'success'); addLog(`Order ${r.data.id}: ${r.data.supply_name} ×${quantity} [${priority}]`); loadOrders(); }
+  else { toast(r?.error||'Failed','error'); }
+}
+
+function quickOrder(id, name) {
+  document.getElementById('oSupply').value=''; setTimeout(()=>{ document.getElementById('oSupply').value=id; },0);
+  document.getElementById('oPriority').value='high';
+  document.getElementById('oNotes').value=`Restock request for ${name}`;
+  openModal('orderModal'); switchTab('orders');
+}
+
+async function loadConsumption() {
+  const r = await http.get('/api/supplies/consumption');
+  if (!r?.success) return;
+  const tbody = document.getElementById('consumptionTable'), empty = document.getElementById('consumptionEmpty');
+  if (!r.data.length) { tbody.innerHTML=''; empty.style.display=''; return; }
+  empty.style.display='none';
+  tbody.innerHTML = r.data.map(c=>`<tr>
+    <td style="font-size:11px;color:var(--muted)">${c.created_at?new Date(c.created_at).toLocaleString():'—'}</td>
+    <td style="font-weight:600">${c.supply_name||'—'}</td>
+    <td style="font-weight:600;color:var(--red)">${c.quantity_used} ${c.unit||''}</td>
+    <td style="color:var(--muted);font-size:12px">${c.hospital_name||'General'}</td>
+    <td style="font-size:12px;color:var(--muted)">${c.reason||'—'}</td>
+  </tr>`).join('');
+  const agg={};
+  r.data.forEach(c=>{ agg[c.supply_name]=(agg[c.supply_name]||0)+Number(c.quantity_used); });
+  const top = Object.entries(agg).sort((a,b)=>b[1]-a[1]).slice(0,6);
+  document.getElementById('topConsumed').innerHTML = top.map(([name,qty])=>
+    `<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--bg2)">
+      <span style="font-size:13px">${name}</span><span style="font-weight:700;color:var(--red)">${qty}</span>
+    </div>`).join('') || '<p style="color:var(--muted);font-size:13px">No data yet</p>';
+}
+
+async function submitConsumption() {
+  const supply_id=document.getElementById('cSupply').value, quantity_used=parseInt(document.getElementById('cQty').value), hospital_id=document.getElementById('cHospital').value, reason=document.getElementById('cReason').value;
+  if (!supply_id||!quantity_used) { toast('Select medicine and quantity.','warn'); return; }
+  const r = await http.post('/api/supplies/consume', { supply_id, hospital_id:hospital_id||undefined, quantity_used, reason });
+  if (r?.success) { closeModal('consumeModal'); toast(`Consumed ${quantity_used} ${r.data.unit} of ${r.data.name}`,'success'); addLog(`Consumption: ${r.data.name} −${quantity_used} | remaining: ${r.data.current_stock}`); loadSupplies(); loadConsumption(); }
+  else { toast(r?.error||'Failed','error'); }
+}
+
+async function loadDeliveries() {
+  const r = await http.get('/api/supplies/deliveries');
+  if (!r?.success) return;
+  document.getElementById('statDeliveries').textContent = r.data.filter(d=>d.status==='planned').length;
+  const el = document.getElementById('deliveriesPanel');
+  if (!r.data.length) { el.innerHTML='<p style="color:var(--muted);font-size:13px">No deliveries yet.</p>'; return; }
+  el.innerHTML = r.data.slice(0,5).map(d => {
+    const route = (() => { try { return JSON.parse(d.route_json); } catch { return {}; } })();
+    return `<div style="padding:8px 0;border-bottom:1px solid var(--bg2)">
+      <div style="display:flex;justify-content:space-between;margin-bottom:2px">
+        <span style="font-size:12px;font-weight:600;color:var(--green)">${d.id}</span>${statusBadge(d.status)}
+      </div>
+      <div style="font-size:12px;color:var(--muted)">Route: ${route.route?.join('→')||'—'} · ${route.totalDistKm||'—'} km · Utility: ${d.total_utility}</div>
+    </div>`;
+  }).join('');
+}
+
+async function doLoadTruck() {
+  const weight = parseInt(document.getElementById('truckWeight').value);
+  const hospIds = [...document.querySelectorAll('.truckHospCheck:checked')].map(c=>c.value);
+  const catPriority = [...document.querySelectorAll('.catCheck:checked')].map(c=>c.value);
+  if (!hospIds.length) { toast('Select at least one hospital.','warn'); return; }
+  closeModal('truckModal');
+  addLog(`Knapsack: optimizing ${weight}kg truck for ${hospIds.length} hospitals…`);
+  const r = await http.post('/api/supplies/load-truck', { max_weight_kg:weight, hospital_ids:hospIds, priority_categories:catPriority });
+  if (!r?.success) { toast(r?.error||'Failed','error'); return; }
+  const d = r.data;
+  addLog(`Knapsack: ${d.selected?.length} items selected | utility: ${d.totalUtility}`);
+  addLog(`Greedy TSP: ${d.route?.route?.join('→')} | ${d.route?.totalDistKm} km`);
+  d.routeWithTimes?.filter(s=>s.id!=='DEPOT').forEach(s => addLog(`Dijkstra leg → ${s.id}: ${s.eta_min} min`));
+  switchTab('truck');
+  document.getElementById('truckResultPanel').style.display='';
+  document.getElementById('truckUtility').textContent = `Total utility: ${d.totalUtility} — ${d.selected?.length} item types`;
+  document.getElementById('truckItems').innerHTML = (d.selected||[]).map(s=>`
+    <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--bg2);font-size:13px">
+      <span>${s.name}</span><span style="color:var(--muted)">${s.weight_per_unit}kg · u:${s.utility_value}</span>
+    </div>`).join('');
+  document.getElementById('truckRoute').innerHTML = `
+    <div style="font-size:14px;font-weight:600;color:var(--blue);margin-bottom:6px">${d.route?.route?.join(' → ')}</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Total: ${d.route?.totalDistKm} km</div>` +
+    (d.routeWithTimes||[]).filter(s=>s.id!=='DEPOT').map(s=>`
+    <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--bg2);font-size:13px">
+      <span>${s.hospital?.name||s.id}</span><span style="color:var(--blue)">${s.eta_min} min</span>
+    </div>`).join('');
+  if (map) {
+    const dest = hospitalsData.filter(h=>hospIds.includes(h.id));
+    const coords = [[28.6139,77.2090],...dest.map(h=>[Number(h.lat),Number(h.lng)]),[28.6139,77.2090]];
+    if (window._routeLine) map.removeLayer(window._routeLine);
+    window._routeLine = L.polyline(coords, { color:'#7c3aed', weight:3, dashArray:'8,5' }).addTo(map);
+    map.fitBounds(L.latLngBounds(coords).pad(0.2));
+    dest.forEach(h=>L.circleMarker([Number(h.lat),Number(h.lng)],{radius:8,color:'#7c3aed',fillColor:'#c4b5fd',fillOpacity:.8}).addTo(map));
+  }
+  toast(`Truck dispatched — ${d.selected?.length} items, ${d.route?.totalDistKm}km route`,'success');
+  loadDeliveries();
+}
+
+async function loadHospitals() {
+  const r = await http.get('/api/hospitals');
+  if (!r?.success) return;
+  hospitalsData = r.data;
+  hospitalsData.forEach(h => {
+    const load  = h.total_beds>0 ? Math.round(((h.total_beds-h.available_beds)/h.total_beds)*100) : 0;
+    placeMarker(h.id, h.lat, h.lng, makeIcon(load>85?'#dc2626':load>65?'#d97706':'#16a34a','🏥'), `<b>${h.name}</b><br>Load: ${load}%`);
+  });
+  placeMarker('depot', 28.6139, 77.2090, makeIcon('#7c3aed','🏭'), '<b>Central Medical Store</b>');
+}
+
+initMap(28.6139, 77.2090, 12);
+Promise.all([loadHospitals(), loadSupplies()]).then(() => {
+  addLog('Supply Management loaded — medicines & consumables ready');
+  addLog('Knapsack catalog loaded | Greedy TSP depot initialized');
+});
+initSocket({
+  supply_updated: d => { loadSupplies(); addLog(`Stock: ${d.name} → ${d.current_stock} ${d.unit}`); },
+  order_created:  d => addLog(`New order: ${d.supply_name} ×${d.quantity} [${d.priority}]`),
+  truck_loaded:   d => { loadDeliveries(); addLog(`Truck ${d.deliveryId} dispatched`); },
+});
+setInterval(() => loadSupplies(), 30000);
+</script>
+</body>
+</html>

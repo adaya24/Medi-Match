@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>MediMatch — Command Center</title>
+  <link rel="stylesheet" href="style.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <span class="logo-icon">🚑</span>
+      <div><div class="logo-title">MediMatch</div><div class="logo-sub">Disaster Response</div></div>
+    </div>
+    <div class="live-dot-row"><span class="live-dot" id="liveIndicator" style="background:#f59e0b"></span><span id="liveText">Connecting…</span></div>
+    <div class="user-badge" id="userBadge"></div>
+    <nav class="nav">
+      <div class="nav-section">Admin</div>
+      <a href="index.html"     class="nav-link" data-role="admin">📊 Command Center</a>
+      <a href="hospitals.html" class="nav-link" data-role="admin">🏥 Hospital Mgmt</a>
+      <a href="triage.html"    class="nav-link" data-role="admin">🩺 Medical Triage</a>
+      <a href="supply.html"    class="nav-link" data-role="admin">💊 Supply Mgmt</a>
+      <div class="nav-section">General</div>
+      <a href="emergency.html" class="nav-link">🚨 Request Emergency</a>
+    </nav>
+    <div style="padding:10px">
+      <button class="btn btn-danger btn-sm" style="width:100%;justify-content:center" onclick="logout()">Sign Out</button>
+    </div>
+    <div class="sidebar-footer">MediMatch v2.0 · Neon PostgreSQL</div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar-title">Command Center — Live Overview</div>
+      <div class="topbar-right">
+        <span class="alert-badge blink">⚠ Disaster Active</span>
+        <span id="clockDisplay" class="clock"></span>
+      </div>
+    </header>
+
+    <div class="content">
+      <!-- Alert -->
+      <div class="alert-banner">
+        <span class="alert-dot blink"></span>
+        <strong>Active Incident:</strong>&nbsp;Cholera outbreak — Delhi region. Multiple critical victims reported.
+        <span class="tag tag-red" style="margin-left:auto">Level 3</span>
+      </div>
+
+      <!-- Stats -->
+      <div class="stats-row">
+        <div class="stat-card"><div class="stat-label">Total Victims</div><div class="stat-value" id="statTotalVictims">—</div><div class="stat-sub" id="statPending">— pending rescue</div></div>
+        <div class="stat-card critical"><div class="stat-label">Critical</div><div class="stat-value" id="statCritical">—</div><div class="stat-sub">need immediate care</div></div>
+        <div class="stat-card"><div class="stat-label">Active Teams</div><div class="stat-value" id="statTeams">—</div><div class="stat-sub">rescue units deployed</div></div>
+        <div class="stat-card"><div class="stat-label">Active Incidents</div><div class="stat-value" id="statIncidents">—</div></div>
+        <div class="stat-card"><div class="stat-label">Available Beds</div><div class="stat-value" id="statBeds">—</div><div class="stat-sub">across network</div></div>
+      </div>
+
+      <!-- Map + sidebar panels -->
+      <div class="grid-map" style="flex:1;min-height:0">
+        <div class="card" style="padding:10px;display:flex;flex-direction:column;gap:8px">
+          <div class="card-title">Live Map — Delhi District</div>
+          <div style="flex:1;min-height:340px" id="map"></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px;overflow-y:auto">
+          <div class="card">
+            <div class="card-title">Hospital Network</div>
+            <div id="hospitalNetStatus"></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Rescue Teams</div>
+            <div id="teamStatus"></div>
+          </div>
+          <div class="algo-log">
+            <div class="algo-log-title">Algorithm Log</div>
+            <div id="algoLog"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom tables -->
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-title">Recent Victims — by Severity</div>
+          <div class="table-wrap">
+            <table><thead><tr><th>ID</th><th>Name</th><th>Triage</th><th>Score</th><th>Status</th></tr></thead>
+            <tbody id="victimsTable"></tbody></table>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Active Incidents</div>
+          <div class="table-wrap">
+            <table><thead><tr><th>ID</th><th>Type</th><th>Severity</th><th>Victims</th><th>Status</th></tr></thead>
+            <tbody id="incidentsTable"></tbody></table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+<script src="app.js"></script>
+<script>
+requireAuth(true);
+
+async function loadStats() {
+  const r = await http.get('/api/emergency/stats');
+  if (!r?.success) return;
+  const d = r.data;
+  document.getElementById('statTotalVictims').textContent = d.totalVictims;
+  document.getElementById('statCritical').textContent     = d.criticalVictims;
+  document.getElementById('statTeams').textContent        = d.activeTeams;
+  document.getElementById('statIncidents').textContent    = d.activeIncidents;
+  document.getElementById('statPending').textContent      = `${d.pendingVictims} pending rescue`;
+}
+
+async function loadBeds() {
+  const r = await http.get('/api/hospitals/stats/overview');
+  if (r?.success) document.getElementById('statBeds').textContent = r.data.available_beds || '—';
+}
+
+async function loadHospitals() {
+  const r = await http.get('/api/hospitals');
+  if (!r?.success) return;
+  const el = document.getElementById('hospitalNetStatus');
+  el.innerHTML = r.data.map(h => {
+    const load  = h.total_beds > 0 ? Math.round(((h.total_beds - h.available_beds) / h.total_beds) * 100) : 0;
+    const color = load > 85 ? 'var(--red)' : load > 65 ? 'var(--amber)' : 'var(--green)';
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--bg2)">
+      <span style="font-size:13px">${h.name}</span>
+      <span style="font-size:12px;font-weight:600;color:${color}">${load}% full</span>
+    </div>`;
+  }).join('');
+  r.data.forEach(h => {
+    const load  = h.total_beds > 0 ? Math.round(((h.total_beds - h.available_beds) / h.total_beds) * 100) : 0;
+    const col   = load > 85 ? '#dc2626' : load > 65 ? '#d97706' : '#16a34a';
+    placeMarker(h.id, h.lat, h.lng, makeIcon(col, '🏥'), `<b>${h.name}</b><br>Load: ${load}%<br>Free beds: ${h.available_beds}`);
+  });
+}
+
+async function loadTeams() {
+  const r = await http.get('/api/emergency/teams');
+  if (!r?.success) return;
+  const el = document.getElementById('teamStatus');
+  el.innerHTML = r.data.map(t => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--bg2)">
+      <span style="font-size:13px">${t.name}</span>
+      ${statusBadge(t.status)}
+    </div>`).join('');
+  const colMap = { available:'#16a34a', 'en-route':'#2563eb', dispatched:'#d97706', 'at-hospital':'#7c3aed' };
+  r.data.forEach(t => placeMarker('tm_'+t.id, t.lat, t.lng, makeIcon(colMap[t.status]||'#6b7280','🚑'), `<b>${t.name}</b><br>${t.status}`));
+}
+
+async function loadVictims() {
+  const r = await http.get('/api/emergency/victims');
+  if (!r?.success) return;
+  document.getElementById('victimsTable').innerHTML = r.data.slice(0,8).map(v =>
+    `<tr><td style="color:var(--muted);font-size:11px">${v.id}</td><td>${v.name}</td><td>${triageBadge(v.triage_category)}</td>
+     <td style="font-weight:600">${v.severity_score}</td><td>${statusBadge(v.status)}</td></tr>`).join('');
+  const colMap = { red:'#dc2626', yellow:'#d97706', green:'#16a34a' };
+  r.data.filter(v => v.status !== 'admitted').forEach(v =>
+    placeMarker('v_'+v.id, v.lat, v.lng, makeIcon(colMap[v.triage_category]||'#6b7280','⚠'),
+      `<b>${v.name}</b><br>${v.triage_category?.toUpperCase()} — Score: ${v.severity_score}`));
+}
+
+async function loadIncidents() {
+  const r = await http.get('/api/emergency/incidents');
+  if (!r?.success) return;
+  document.getElementById('incidentsTable').innerHTML = r.data.slice(0,8).map(i =>
+    `<tr><td style="color:var(--muted);font-size:11px">${i.id}</td><td>${i.type}</td>
+     <td><span style="font-weight:600;color:${i.severity==='critical'?'var(--red)':i.severity==='high'?'var(--amber)':'var(--green)'}">${i.severity}</span></td>
+     <td>${i.victim_count}</td><td>${statusBadge(i.status)}</td></tr>`).join('');
+}
+
+async function init() {
+  initMap(28.6139, 77.2090, 12);
+  await Promise.all([loadStats(), loadBeds(), loadHospitals(), loadTeams(), loadVictims(), loadIncidents()]);
+  addLog('Command Center loaded — Neon PostgreSQL connected');
+  addLog('Dijkstra road network active, Ford-Fulkerson flow graph ready');
+  initSocket({
+    stats_update:         d  => { document.getElementById('statTotalVictims').textContent = d.totalVictims; document.getElementById('statCritical').textContent = d.criticalVictims; document.getElementById('statTeams').textContent = d.activeTeams; document.getElementById('statBeds').textContent = d.availableBeds; },
+    new_victim:           () => { loadVictims(); loadStats(); },
+    team_position_update: d  => { if(mapMarkers['tm_'+d.id]) mapMarkers['tm_'+d.id].setLatLng([d.lat,d.lng]); },
+    hospital_updated:     () => loadHospitals(),
+    team_updated:         () => loadTeams(),
+  });
+}
+
+init();
+setInterval(() => { loadStats(); loadHospitals(); loadTeams(); }, 30000);
+</script>
+</body>
+</html>

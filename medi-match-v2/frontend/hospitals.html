@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>MediMatch — Hospital Management</title>
+  <link rel="stylesheet" href="style.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="sidebar-logo"><span class="logo-icon">🚑</span><div><div class="logo-title">MediMatch</div><div class="logo-sub">Disaster Response</div></div></div>
+    <div class="live-dot-row"><span class="live-dot" id="liveIndicator" style="background:#f59e0b"></span><span id="liveText">Connecting…</span></div>
+    <div class="user-badge" id="userBadge"></div>
+    <nav class="nav">
+      <div class="nav-section">Admin</div>
+      <a href="index.html"     class="nav-link" data-role="admin">📊 Command Center</a>
+      <a href="hospitals.html" class="nav-link" data-role="admin">🏥 Hospital Mgmt</a>
+      <a href="triage.html"    class="nav-link" data-role="admin">🩺 Medical Triage</a>
+      <a href="supply.html"    class="nav-link" data-role="admin">💊 Supply Mgmt</a>
+      <div class="nav-section">General</div>
+      <a href="emergency.html" class="nav-link">🚨 Request Emergency</a>
+    </nav>
+    <div style="padding:10px"><button class="btn btn-danger btn-sm" style="width:100%;justify-content:center" onclick="logout()">Sign Out</button></div>
+    <div class="sidebar-footer">MediMatch v2.0 · Neon DB</div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar-title">🏥 Hospital Management</div>
+      <div class="topbar-right">
+        <button class="btn btn-purple" onclick="runRebalance()">Run Rebalance (Ford-Fulkerson)</button>
+        <button class="btn btn-outline" onclick="openModal('transferModal')">Transfer Resources</button>
+        <span id="clockDisplay" class="clock"></span>
+      </div>
+    </header>
+
+    <div class="content">
+      <!-- Network overview -->
+      <div class="stats-row">
+        <div class="stat-card"><div class="stat-label">Total Beds</div><div class="stat-value" id="ovTotal">—</div></div>
+        <div class="stat-card"><div class="stat-label">Available Beds</div><div class="stat-value" id="ovAvail">—</div><div class="stat-sub" id="ovPct"></div></div>
+        <div class="stat-card critical"><div class="stat-label">ICU Available</div><div class="stat-value" id="ovIcu">—</div></div>
+        <div class="stat-card"><div class="stat-label">Admitted Today</div><div class="stat-value" id="ovToday">—</div></div>
+        <div class="stat-card critical"><div class="stat-label">Critical Hospitals</div><div class="stat-value" id="ovCrit">—</div></div>
+      </div>
+
+      <!-- Rebalance result banner -->
+      <div id="ffBanner" style="display:none;padding:10px 14px;background:var(--purple-bg);border:1px solid #c4b5fd;border-radius:var(--radius);font-size:13px;color:var(--purple)">
+        <span id="ffBannerText"></span>
+      </div>
+
+      <!-- Hospital cards -->
+      <div class="grid-2" id="hospitalGrid"></div>
+
+      <!-- Map + admit queue -->
+      <div class="grid-map" style="min-height:380px">
+        <div class="card" style="padding:10px;display:flex;flex-direction:column;gap:8px">
+          <div class="card-title">Hospital Network Map</div>
+          <div style="flex:1;min-height:300px" id="map"></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px;overflow-y:auto">
+          <div class="card" style="flex:1;overflow-y:auto">
+            <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+              <span>Admit Patient</span>
+              <select id="admitHospSelect" class="form-select" style="width:auto;font-size:12px;padding:5px 8px" onchange="renderAdmitQueue()">
+                <option value="">Select hospital…</option>
+              </select>
+            </div>
+            <div id="admitQueue"><p style="color:var(--muted);font-size:13px">Select a hospital above to see waiting patients.</p></div>
+          </div>
+          <div class="algo-log"><div class="algo-log-title">Algorithm Log</div><div id="algoLog"></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Transfer Modal -->
+<div class="modal-overlay" id="transferModal" style="display:none">
+  <div class="modal">
+    <div class="modal-header"><span class="modal-title">Transfer Bed Resources</span><button class="modal-close" onclick="closeModal('transferModal')">✕</button></div>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:16px">Move bed capacity from one hospital to another when load is uneven.</p>
+    <div class="form-group"><label class="form-label">From Hospital</label><select id="tFrom" class="form-select"></select></div>
+    <div class="form-group"><label class="form-label">To Hospital</label><select id="tTo" class="form-select"></select></div>
+    <div class="form-group"><label class="form-label">Resource Type</label>
+      <select id="tType" class="form-select">
+        <option value="icu">ICU Beds</option>
+        <option value="ventilator">Ventilators</option>
+        <option value="isolation">Isolation Beds</option>
+        <option value="general">General Ward Beds</option>
+      </select>
+    </div>
+    <div class="form-group"><label class="form-label">Amount</label><input id="tAmount" class="form-input" type="number" min="1" value="1"/></div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="doTransfer()">Transfer</button>
+  </div>
+</div>
+
+<!-- Admit Modal -->
+<div class="modal-overlay" id="admitModal" style="display:none">
+  <div class="modal">
+    <div class="modal-header"><span class="modal-title" id="admitModalTitle">Admit Patient</span><button class="modal-close" onclick="closeModal('admitModal')">✕</button></div>
+    <input type="hidden" id="admitVictimId"/><input type="hidden" id="admitHospId"/>
+    <div class="form-group"><label class="form-label">Bed Type</label>
+      <select id="admitBedType" class="form-select">
+        <option value="icu">ICU</option><option value="isolation">Isolation</option>
+        <option value="general">General Ward</option><option value="ventilator">Ventilator</option>
+      </select>
+    </div>
+    <div id="admitNote" style="font-size:12px;color:var(--muted);margin-bottom:12px"></div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="doAdmit()">Admit Patient</button>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+<script src="app.js"></script>
+<script>
+requireAuth(true);
+let hospitalsData = [], victimsData = [];
+
+async function loadOverview() {
+  const r = await http.get('/api/hospitals/stats/overview');
+  if (!r?.success) return;
+  const d = r.data;
+  document.getElementById('ovTotal').textContent = d.total_beds||0;
+  document.getElementById('ovAvail').textContent = d.available_beds||0;
+  const occ = d.total_beds>0 ? Math.round(((d.total_beds-d.available_beds)/d.total_beds)*100) : 0;
+  document.getElementById('ovPct').textContent   = `${occ}% occupied`;
+  document.getElementById('ovIcu').textContent   = d.available_icu||0;
+  document.getElementById('ovToday').textContent = d.admittedtoday||0;
+  document.getElementById('ovCrit').textContent  = d.critical_hospitals||0;
+}
+
+async function loadHospitals() {
+  const r = await http.get('/api/hospitals');
+  if (!r?.success) return;
+  hospitalsData = r.data;
+  const grid = document.getElementById('hospitalGrid');
+  grid.innerHTML = hospitalsData.map(h => {
+    const load   = h.total_beds>0 ? Math.round(((h.total_beds-h.available_beds)/h.total_beds)*100) : 0;
+    const icuLoad= h.total_icu>0  ? Math.round(((h.total_icu-h.available_icu)/h.total_icu)*100) : 0;
+    const loadCol= load>85?'var(--red)':load>65?'var(--amber)':'var(--green)';
+    const oxyCol = Number(h.oxygen_level)<30?'var(--red)':Number(h.oxygen_level)<60?'var(--amber)':'var(--green)';
+    return `<div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+        <div><div style="font-weight:600;font-size:15px">${h.name}</div><div style="font-size:12px;color:var(--muted)">${h.id}</div></div>
+        <div style="text-align:right">${statusBadge(h.status)}<div style="font-size:13px;font-weight:700;color:${loadCol};margin-top:3px">${load}% full</div></div>
+      </div>
+      ${bedBar('ICU', h.total_icu-h.available_icu, h.total_icu, icuLoad>80?'#dc2626':'#2563eb')}
+      ${bedBar('Ventilators', h.total_ventilator-h.available_ventilator, h.total_ventilator, '#7c3aed')}
+      ${bedBar('Isolation', h.total_isolation-h.available_isolation, h.total_isolation, '#d97706')}
+      ${bedBar('General Ward', h.total_general-h.available_general, h.total_general, '#16a34a')}
+      <div style="display:flex;gap:12px;margin-top:10px;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--muted)">
+        <span>O₂: <strong style="color:${oxyCol}">${h.oxygen_level}%</strong></span>
+        <span>ICU free: <strong style="color:var(--blue)">${h.available_icu}</strong></span>
+        <span>Iso: <strong style="color:var(--amber)">${h.available_isolation}</strong></span>
+        <span>Ward: <strong style="color:var(--green)">${h.available_general}</strong></span>
+        <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="selectHosp('${h.id}')">Admit Patient →</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  const opts = hospitalsData.map(h=>`<option value="${h.id}">${h.name}</option>`).join('');
+  document.getElementById('tFrom').innerHTML = opts;
+  document.getElementById('tTo').innerHTML   = opts;
+  document.getElementById('admitHospSelect').innerHTML = '<option value="">Select hospital…</option>' + opts;
+
+  hospitalsData.forEach(h => {
+    const load  = h.total_beds>0 ? Math.round(((h.total_beds-h.available_beds)/h.total_beds)*100) : 0;
+    const col   = load>85?'#dc2626':load>65?'#d97706':'#16a34a';
+    placeMarker(h.id, h.lat, h.lng, makeIcon(col,'🏥'), `<b>${h.name}</b><br>Load: ${load}%<br>ICU free: ${h.available_icu}`);
+  });
+}
+
+async function loadVictims() {
+  const r = await http.get('/api/emergency/victims');
+  if (r?.success) victimsData = r.data;
+}
+
+function selectHosp(id) {
+  document.getElementById('admitHospSelect').value = id;
+  renderAdmitQueue();
+  document.querySelector('.content').scrollTop = 99999;
+}
+
+function renderAdmitQueue() {
+  const hospId = document.getElementById('admitHospSelect').value;
+  const el = document.getElementById('admitQueue');
+  if (!hospId) { el.innerHTML = '<p style="color:var(--muted);font-size:13px">Select a hospital above.</p>'; return; }
+  const waiting = victimsData.filter(v => ['waiting','assigned'].includes(v.status));
+  if (!waiting.length) { el.innerHTML = '<p style="color:var(--muted);font-size:13px">No patients currently waiting.</p>'; return; }
+  el.innerHTML = waiting.slice(0,10).map(v => {
+    const colMap = { red:'var(--red)', yellow:'var(--amber)', green:'var(--green)' };
+    const col = colMap[v.triage_category]||'var(--muted)';
+    const sugBed = v.triage_category==='red'?'icu':v.triage_category==='yellow'?'isolation':'general';
+    return `<div style="padding:9px 0;border-bottom:1px solid var(--bg2)">
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+        <span style="font-weight:600;color:${col}">${v.name}</span>${triageBadge(v.triage_category)}
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Score: ${v.severity_score} &nbsp;·&nbsp; ${v.id} &nbsp;·&nbsp; Suggested: <b>${sugBed.toUpperCase()}</b></div>
+      <button class="btn btn-primary btn-sm" onclick="openAdmit('${v.id}','${hospId}','${v.name}','${sugBed}')">Admit to ${sugBed.toUpperCase()}</button>
+    </div>`;
+  }).join('');
+}
+
+function openAdmit(victimId, hospId, name, sugBed) {
+  document.getElementById('admitVictimId').value = victimId;
+  document.getElementById('admitHospId').value   = hospId;
+  document.getElementById('admitModalTitle').textContent = `Admit — ${name}`;
+  document.getElementById('admitBedType').value  = sugBed;
+  document.getElementById('admitNote').textContent = `Suggested bed type based on triage category: ${sugBed.toUpperCase()}. Uses Hash O(1) lookup + Gale-Shapley matching.`;
+  openModal('admitModal');
+}
+
+async function doAdmit() {
+  const victimId = document.getElementById('admitVictimId').value;
+  const hospId   = document.getElementById('admitHospId').value;
+  const bedType  = document.getElementById('admitBedType').value;
+  const r = await http.post(`/api/hospitals/${hospId}/admit`, { victimId, bedType });
+  if (r?.success) {
+    closeModal('admitModal');
+    toast(`Patient admitted to ${bedType.toUpperCase()} bed.`, 'success');
+    addLog(`Hash O(1): admitted to ${hospId} — ${bedType.toUpperCase()} | Gale-Shapley matched`);
+    await Promise.all([loadHospitals(), loadVictims(), loadOverview()]);
+    renderAdmitQueue();
+  } else { toast(r?.error || 'Admission failed.', 'error'); }
+}
+
+async function runRebalance() {
+  const r = await http.post('/api/hospitals/rebalance', {});
+  if (r?.success) {
+    const d = r.data;
+    const banner = document.getElementById('ffBanner');
+    document.getElementById('ffBannerText').textContent = `Ford-Fulkerson complete — max network flow: ${d.maxFlow} capacity units. ${d.paths?.length||0} transfer paths identified.`;
+    banner.style.display = 'block';
+    addLog(`Ford-Fulkerson: max flow ${d.maxFlow} | ${d.paths?.length||0} paths`);
+    (d.paths||[]).slice(0,3).forEach(p => addLog(`  Path: ${p.path?.join('→')} | flow: ${p.flow}`));
+    setTimeout(() => { banner.style.display = 'none'; }, 10000);
+  } else { toast(r?.error || 'Rebalance failed.', 'error'); }
+}
+
+async function doTransfer() {
+  const fromHospitalId = document.getElementById('tFrom').value;
+  const toHospitalId   = document.getElementById('tTo').value;
+  const resourceType   = document.getElementById('tType').value;
+  const amount         = parseInt(document.getElementById('tAmount').value);
+  if (fromHospitalId === toHospitalId) { toast('Source and destination must be different.', 'warn'); return; }
+  const r = await http.post('/api/hospitals/transfer', { fromHospitalId, toHospitalId, resourceType, amount });
+  if (r?.success) {
+    closeModal('transferModal');
+    toast(r.message || 'Transfer complete.', 'success');
+    addLog(`Transfer: ${fromHospitalId}→${toHospitalId} | ${amount} ${resourceType} beds`);
+    await Promise.all([loadHospitals(), loadOverview()]);
+  } else { toast(r?.error || 'Transfer failed.', 'error'); }
+}
+
+initMap(28.6139, 77.2090, 12);
+Promise.all([loadOverview(), loadHospitals(), loadVictims()]).then(() => {
+  addLog('Hospital Management loaded — Neon PostgreSQL');
+  addLog('Hash O(1) registry ready | Ford-Fulkerson graph initialized');
+});
+initSocket({
+  hospital_updated: async () => { await Promise.all([loadHospitals(), loadOverview()]); },
+  bed_allocated:    d => addLog(`Bed allocated: ${d.bedType} at ${d.hospitalId}`),
+  patient_discharged: () => { loadHospitals(); loadOverview(); },
+  resource_transfer:  d => addLog(`Transfer: ${d.fromHospitalId}→${d.toHospitalId} | ${d.amount} ${d.resourceType}`),
+});
+setInterval(() => { loadHospitals(); loadOverview(); }, 30000);
+</script>
+</body>
+</html>

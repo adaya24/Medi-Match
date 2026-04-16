@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>MediMatch — Medical Triage</title>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="sidebar-logo"><span class="logo-icon">🚑</span><div><div class="logo-title">MediMatch</div><div class="logo-sub">Disaster Response</div></div></div>
+    <div class="live-dot-row"><span class="live-dot" id="liveIndicator" style="background:#f59e0b"></span><span id="liveText">Connecting…</span></div>
+    <div class="user-badge" id="userBadge"></div>
+    <nav class="nav">
+      <div class="nav-section">Admin</div>
+      <a href="index.html"     class="nav-link" data-role="admin">📊 Command Center</a>
+      <a href="hospitals.html" class="nav-link" data-role="admin">🏥 Hospital Mgmt</a>
+      <a href="triage.html"    class="nav-link" data-role="admin">🩺 Medical Triage</a>
+      <a href="supply.html"    class="nav-link" data-role="admin">💊 Supply Mgmt</a>
+      <div class="nav-section">General</div>
+      <a href="emergency.html" class="nav-link">🚨 Request Emergency</a>
+    </nav>
+    <div style="padding:10px"><button class="btn btn-danger btn-sm" style="width:100%;justify-content:center" onclick="logout()">Sign Out</button></div>
+    <div class="sidebar-footer">MediMatch v2.0 · Neon DB</div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar-title">🩺 Medical Triage — Priority Queue</div>
+      <div class="topbar-right">
+        <button class="btn btn-outline" onclick="loadTriage()">Refresh Queue</button>
+        <button class="btn btn-primary" onclick="openModal('vitalsModal')">Update Vitals</button>
+        <span id="clockDisplay" class="clock"></span>
+      </div>
+    </header>
+
+    <div class="content">
+      <!-- Stats -->
+      <div class="stats-row">
+        <div class="stat-card critical"><div class="stat-label">Red — Critical</div><div class="stat-value" id="cntRed">—</div><div class="stat-sub">immediate treatment</div></div>
+        <div class="stat-card"><div class="stat-label">Yellow — Urgent</div><div class="stat-value" id="cntYellow" style="color:var(--amber)">—</div><div class="stat-sub">delayed acceptable</div></div>
+        <div class="stat-card"><div class="stat-label">Green — Stable</div><div class="stat-value" id="cntGreen" style="color:var(--green)">—</div><div class="stat-sub">minor treatment</div></div>
+        <div class="stat-card"><div class="stat-label">Admitted</div><div class="stat-value" id="cntAdmitted" style="color:var(--blue)">—</div></div>
+        <div class="stat-card"><div class="stat-label">Total in Queue</div><div class="stat-value" id="cntTotal">—</div></div>
+      </div>
+
+      <!-- Algorithm info -->
+      <div style="background:var(--blue-bg);border:1px solid #bfdbfe;border-radius:var(--radius);padding:10px 14px;display:flex;gap:24px;flex-wrap:wrap;font-size:12px;color:#1e40af">
+        <span><strong>Sorting:</strong> QuickSort (descending severity score)</span>
+        <span><strong>Priority Queue:</strong> Max-Heap O(log n) for bed assignment</span>
+        <span><strong>Doctor Match:</strong> Gale-Shapley stable matching</span>
+        <span><strong>Scoring:</strong> SpO2 + HR + RR + Temp + Consciousness → 0–100</span>
+      </div>
+
+      <!-- Three columns -->
+      <div class="grid-3" style="flex:1;min-height:0;align-items:start">
+        <!-- RED -->
+        <div>
+          <div style="background:var(--red-bg);border:1px solid #fca5a5;border-radius:var(--radius) var(--radius) 0 0;padding:10px 14px;display:flex;justify-content:space-between;align-items:center">
+            <span style="font-weight:600;color:var(--red)">🔴 Red — Immediate</span>
+            <span style="font-weight:700;color:var(--red)" id="badgeRed">0</span>
+          </div>
+          <div id="colRed" style="border:1px solid #fca5a5;border-top:none;border-radius:0 0 var(--radius) var(--radius);max-height:520px;overflow-y:auto;background:var(--surface)"></div>
+        </div>
+        <!-- YELLOW -->
+        <div>
+          <div style="background:var(--amber-bg);border:1px solid #fcd34d;border-radius:var(--radius) var(--radius) 0 0;padding:10px 14px;display:flex;justify-content:space-between;align-items:center">
+            <span style="font-weight:600;color:var(--amber)">🟡 Yellow — Urgent</span>
+            <span style="font-weight:700;color:var(--amber)" id="badgeYellow">0</span>
+          </div>
+          <div id="colYellow" style="border:1px solid #fcd34d;border-top:none;border-radius:0 0 var(--radius) var(--radius);max-height:520px;overflow-y:auto;background:var(--surface)"></div>
+        </div>
+        <!-- GREEN -->
+        <div>
+          <div style="background:var(--green-bg);border:1px solid #86efac;border-radius:var(--radius) var(--radius) 0 0;padding:10px 14px;display:flex;justify-content:space-between;align-items:center">
+            <span style="font-weight:600;color:var(--green)">🟢 Green — Stable</span>
+            <span style="font-weight:700;color:var(--green)" id="badgeGreen">0</span>
+          </div>
+          <div id="colGreen" style="border:1px solid #86efac;border-top:none;border-radius:0 0 var(--radius) var(--radius);max-height:520px;overflow-y:auto;background:var(--surface)"></div>
+        </div>
+      </div>
+
+      <div class="algo-log"><div class="algo-log-title">Algorithm Log</div><div id="algoLog"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- Update Vitals Modal -->
+<div class="modal-overlay" id="vitalsModal" style="display:none">
+  <div class="modal">
+    <div class="modal-header"><span class="modal-title">Update Patient Vitals</span><button class="modal-close" onclick="closeModal('vitalsModal')">✕</button></div>
+    <div class="form-group"><label class="form-label">Patient</label><select id="vPatientSel" class="form-select"></select></div>
+    <div class="grid-2" style="gap:10px">
+      <div class="form-group"><label class="form-label">SpO2 (%)</label><input id="vSpo2" class="form-input" type="number" placeholder="98"/></div>
+      <div class="form-group"><label class="form-label">Heart Rate (bpm)</label><input id="vHr" class="form-input" type="number" placeholder="80"/></div>
+      <div class="form-group"><label class="form-label">Respiratory Rate</label><input id="vRr" class="form-input" type="number" placeholder="16"/></div>
+      <div class="form-group"><label class="form-label">Temperature (°C)</label><input id="vTemp" class="form-input" type="number" step="0.1" placeholder="37.0"/></div>
+    </div>
+    <div class="form-group"><label class="form-label">Consciousness</label>
+      <select id="vConsciousness" class="form-select">
+        <option value="conscious">Conscious</option><option value="confused">Confused</option>
+        <option value="drowsy">Drowsy</option><option value="unconscious">Unconscious</option>
+      </select>
+    </div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="submitVitals()">Update & Re-score</button>
+  </div>
+</div>
+
+<script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+<script src="app.js"></script>
+<script>
+requireAuth(true);
+let triageData = [];
+
+function scoreBar(score) {
+  const color = score>=75?'#dc2626':score>=45?'#d97706':'#16a34a';
+  return `<div style="margin-top:6px">
+    <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:3px"><span>Severity Score</span><span style="font-weight:600;color:${color}">${score}/100</span></div>
+    <div class="progress-bar"><div class="progress-fill" style="width:${score}%;background:${color}"></div></div>
+  </div>`;
+}
+
+function vitalChip(label, val, isOk) {
+  if (val===null||val===undefined) return '';
+  const col = isOk ? 'color:#166534;background:#dcfce7' : 'color:#991b1b;background:#fee2e2';
+  return `<span style="${col};padding:1px 7px;border-radius:10px;font-size:11px;font-weight:500;margin-right:4px">${label}: ${val}</span>`;
+}
+
+function victimCard(v, borderColor) {
+  return `<div style="padding:12px 14px;border-bottom:1px solid var(--bg2)">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
+      <div><span style="font-weight:600;font-size:14px;color:${borderColor}">${v.name}</span><span style="font-size:11px;color:var(--muted);margin-left:8px">${v.id}</span></div>
+      ${statusBadge(v.status)}
+    </div>
+    <div style="margin-bottom:6px">
+      ${vitalChip('O₂', v.oxygen_level,    v.oxygen_level>=95)}
+      ${vitalChip('HR', v.heart_rate,       v.heart_rate>=60&&v.heart_rate<=100)}
+      ${vitalChip('RR', v.respiratory_rate, v.respiratory_rate>=12&&v.respiratory_rate<=20)}
+      ${vitalChip('T',  v.temperature,      v.temperature>=36&&v.temperature<=37.5)}
+    </div>
+    ${v.consciousness&&v.consciousness!=='conscious'?`<div style="font-size:12px;color:var(--red);margin-bottom:4px;font-weight:500">⚠ ${v.consciousness}</div>`:''}
+    ${v.team_name    ?`<div style="font-size:11px;color:var(--muted)">Team: ${v.team_name}</div>`:''}
+    ${v.hospital_name?`<div style="font-size:11px;color:var(--muted)">Hospital: ${v.hospital_name}</div>`:''}
+    ${scoreBar(v.severity_score)}
+  </div>`;
+}
+
+function emptyCol(msg) { return `<div style="padding:24px 14px;color:var(--muted);font-size:13px;text-align:center">${msg}</div>`; }
+
+async function loadTriage() {
+  const r = await http.get('/api/triage');
+  if (!r?.success) return;
+  triageData = r.data;
+  const red = triageData.filter(v=>v.triage_category==='red');
+  const yel = triageData.filter(v=>v.triage_category==='yellow');
+  const grn = triageData.filter(v=>v.triage_category==='green');
+  const adm = triageData.filter(v=>v.status==='admitted');
+  document.getElementById('cntRed').textContent     = red.length;
+  document.getElementById('cntYellow').textContent  = yel.length;
+  document.getElementById('cntGreen').textContent   = grn.length;
+  document.getElementById('cntAdmitted').textContent= adm.length;
+  document.getElementById('cntTotal').textContent   = triageData.length;
+  document.getElementById('badgeRed').textContent   = red.length;
+  document.getElementById('badgeYellow').textContent= yel.length;
+  document.getElementById('badgeGreen').textContent = grn.length;
+  document.getElementById('colRed').innerHTML    = red.length    ? red.map(v=>victimCard(v,'var(--red)')).join('') : emptyCol('No critical patients');
+  document.getElementById('colYellow').innerHTML = yel.length ? yel.map(v=>victimCard(v,'var(--amber)')).join('') : emptyCol('No urgent patients');
+  document.getElementById('colGreen').innerHTML  = grn.length  ? grn.map(v=>victimCard(v,'var(--green)')).join('') : emptyCol('No stable patients');
+  addLog(`QuickSort: ${triageData.length} patients sorted | RED:${red.length} YELLOW:${yel.length} GREEN:${grn.length}`);
+  addLog(`Max-Heap top: ${triageData[0]?.name||'—'} (score ${triageData[0]?.severity_score||0})`);
+  document.getElementById('vPatientSel').innerHTML = triageData.map(v=>`<option value="${v.id}">${v.name} — ${v.triage_category?.toUpperCase()} (${v.severity_score})</option>`).join('');
+}
+
+async function submitVitals() {
+  const id = document.getElementById('vPatientSel').value;
+  const vitals = {
+    oxygen_level:     parseFloat(document.getElementById('vSpo2').value)||undefined,
+    heart_rate:       parseInt(document.getElementById('vHr').value)||undefined,
+    respiratory_rate: parseInt(document.getElementById('vRr').value)||undefined,
+    temperature:      parseFloat(document.getElementById('vTemp').value)||undefined,
+    consciousness:    document.getElementById('vConsciousness').value,
+  };
+  Object.keys(vitals).forEach(k=>{ if(vitals[k]===undefined) delete vitals[k]; });
+  const r = await http.patch(`/api/triage/${id}/vitals`, vitals);
+  if (r?.success) {
+    closeModal('vitalsModal');
+    toast(`${r.data.name} re-scored: ${r.data.severity_score} → ${r.data.triage_category?.toUpperCase()}`, 'success');
+    addLog(`Re-scored ${r.data.id}: ${r.data.severity_score} (${r.data.triage_category})`);
+    loadTriage();
+  } else { toast(r?.error||'Update failed.','error'); }
+}
+
+loadTriage();
+addLog('Medical Triage loaded');
+initSocket({
+  new_victim:     () => { loadTriage(); addLog('New victim added to triage queue'); },
+  vitals_updated: d  => { loadTriage(); addLog(`Vitals updated — ${d.id} score: ${d.severity_score}`); },
+  bed_allocated:  () => loadTriage(),
+});
+</script>
+</body>
+</html>

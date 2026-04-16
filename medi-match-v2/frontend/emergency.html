@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>MediMatch — Request Emergency</title>
+  <link rel="stylesheet" href="style.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <span class="logo-icon">🚑</span>
+      <div><div class="logo-title">MediMatch</div><div class="logo-sub">Disaster Response</div></div>
+    </div>
+    <div class="live-dot-row"><span class="live-dot" id="liveIndicator" style="background:#f59e0b"></span><span id="liveText">Connecting…</span></div>
+    <div class="user-badge" id="userBadge"></div>
+    <nav class="nav">
+      <div class="nav-section">Admin</div>
+      <a href="index.html"     class="nav-link" data-role="admin">📊 Command Center</a>
+      <a href="hospitals.html" class="nav-link" data-role="admin">🏥 Hospital Mgmt</a>
+      <a href="triage.html"    class="nav-link" data-role="admin">🩺 Medical Triage</a>
+      <a href="supply.html"    class="nav-link" data-role="admin">💊 Supply Mgmt</a>
+      <div class="nav-section">General</div>
+      <a href="emergency.html" class="nav-link">🚨 Request Emergency</a>
+    </nav>
+    <div style="padding:10px"><button class="btn btn-danger btn-sm" style="width:100%;justify-content:center" onclick="logout()">Sign Out</button></div>
+    <div class="sidebar-footer">MediMatch v2.0</div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar-title">🚨 Request Emergency</div>
+      <div class="topbar-right">
+        <button class="btn btn-primary" onclick="openModal('reportModal')">+ Report Incident</button>
+        <button class="btn btn-outline" id="dispatchBtn" style="display:none" onclick="openModal('dispatchModal')">Dispatch Team</button>
+        <span id="clockDisplay" class="clock"></span>
+      </div>
+    </header>
+
+    <div class="content">
+      <!-- Stats -->
+      <div class="stats-row">
+        <div class="stat-card"><div class="stat-label">Total Victims</div><div class="stat-value" id="statTotal">—</div></div>
+        <div class="stat-card critical"><div class="stat-label">Critical</div><div class="stat-value" id="statCrit">—</div></div>
+        <div class="stat-card"><div class="stat-label">Teams Active</div><div class="stat-value" id="statTeams">—</div></div>
+        <div class="stat-card"><div class="stat-label">Incidents</div><div class="stat-value" id="statInc">—</div></div>
+        <div class="stat-card"><div class="stat-label">Pending Rescue</div><div class="stat-value" id="statPending">—</div></div>
+      </div>
+
+      <div class="grid-map" style="flex:1;min-height:0">
+        <!-- Map -->
+        <div class="card" style="padding:10px;display:flex;flex-direction:column;gap:8px">
+          <div class="card-title">Victim Locations</div>
+          <div style="flex:1;min-height:340px" id="map"></div>
+        </div>
+
+        <!-- Right panels -->
+        <div style="display:flex;flex-direction:column;gap:12px;overflow-y:auto">
+          <div class="card">
+            <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+              <span>Rescue Teams</span>
+            </div>
+            <div id="teamsPanel"></div>
+          </div>
+          <div class="card" style="flex:1;overflow-y:auto">
+            <div class="card-title">Victims — by Severity Score</div>
+            <div id="victimsPanel"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Report Incident Modal -->
+<div class="modal-overlay" id="reportModal" style="display:none">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">Report Emergency Incident</span>
+      <button class="modal-close" onclick="closeModal('reportModal')">✕</button>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Patient / Victim Name *</label>
+      <input id="rName" class="form-input" placeholder="Full name"/>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Incident Type</label>
+      <select id="rType" class="form-select">
+        <option value="medical">Medical Emergency</option>
+        <option value="accident">Road Accident</option>
+        <option value="epidemic">Epidemic / Outbreak</option>
+        <option value="fire">Fire / Explosion</option>
+        <option value="trauma">Trauma / Injury</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Description</label>
+      <textarea id="rDesc" class="form-textarea" placeholder="Describe the situation…"></textarea>
+    </div>
+    <div id="reportError" style="color:var(--red);font-size:12px;margin-bottom:8px;display:none"></div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="submitReport()">Submit Report</button>
+  </div>
+</div>
+
+<!-- Dispatch Modal (admin) -->
+<div class="modal-overlay" id="dispatchModal" style="display:none">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">Dispatch Rescue Team</span>
+      <button class="modal-close" onclick="closeModal('dispatchModal')">✕</button>
+    </div>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:16px">Assign an available team to a waiting victim. Route calculated via Dijkstra's algorithm.</p>
+    <div class="form-group">
+      <label class="form-label">Select Team</label>
+      <select id="dTeam" class="form-select"><option value="">— choose team —</option></select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Select Victim</label>
+      <select id="dVictim" class="form-select"><option value="">— choose victim —</option></select>
+    </div>
+    <div id="dispatchResult" style="display:none;margin-top:10px;padding:10px;background:var(--green-bg);border:1px solid #86efac;border-radius:var(--radius);font-size:13px;color:var(--green)"></div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:12px" onclick="doDispatch()">Dispatch</button>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+<script src="app.js"></script>
+<script>
+requireAuth();
+let victimsData = [], teamsData = [];
+
+async function loadAll() {
+  const [sR, vR, tR] = await Promise.all([
+    http.get('/api/emergency/stats'),
+    http.get('/api/emergency/victims'),
+    http.get('/api/emergency/teams'),
+  ]);
+  if (sR?.success) {
+    document.getElementById('statTotal').textContent   = sR.data.totalVictims;
+    document.getElementById('statCrit').textContent    = sR.data.criticalVictims;
+    document.getElementById('statTeams').textContent   = sR.data.activeTeams;
+    document.getElementById('statInc').textContent     = sR.data.activeIncidents;
+    document.getElementById('statPending').textContent = sR.data.pendingVictims;
+  }
+  if (vR?.success) {
+    victimsData = vR.data;
+    const el = document.getElementById('victimsPanel');
+    el.innerHTML = victimsData.slice(0,15).map(v => {
+      const colMap = { red:'var(--red)', yellow:'var(--amber)', green:'var(--green)' };
+      const col = colMap[v.triage_category] || 'var(--muted)';
+      return `<div style="padding:9px 0;border-bottom:1px solid var(--bg2);display:flex;gap:8px;align-items:flex-start">
+        <div style="flex:1">
+          <div style="font-weight:600;color:${col};font-size:13px">${v.name}</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px">Score: ${v.severity_score} &nbsp;·&nbsp; ${v.status}${v.team_name?` &nbsp;·&nbsp; ${v.team_name}`:''}</div>
+        </div>
+        ${triageBadge(v.triage_category)}
+      </div>`;
+    }).join('');
+    const colMap = { red:'#dc2626', yellow:'#d97706', green:'#16a34a' };
+    victimsData.filter(v => v.status !== 'admitted').forEach(v =>
+      placeMarker('v_'+v.id, v.lat, v.lng, makeIcon(colMap[v.triage_category]||'#6b7280','⚠'),
+        `<b>${v.name}</b><br>${v.triage_category?.toUpperCase()} — ${v.severity_score}`));
+  }
+  if (tR?.success) {
+    teamsData = tR.data;
+    const el = document.getElementById('teamsPanel');
+    el.innerHTML = teamsData.map(t => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--bg2)">
+        <span style="font-size:13px">${t.name}</span>${statusBadge(t.status)}
+      </div>`).join('');
+    const cMap = { available:'#16a34a','en-route':'#2563eb',dispatched:'#d97706','at-hospital':'#7c3aed' };
+    teamsData.forEach(t => placeMarker('tm_'+t.id, t.lat, t.lng, makeIcon(cMap[t.status]||'#6b7280','🚑'), `<b>${t.name}</b><br>${t.status}`));
+    if (isAdmin()) {
+      document.getElementById('dispatchBtn').style.display = '';
+      const ts = document.getElementById('dTeam');
+      const vs = document.getElementById('dVictim');
+      ts.innerHTML = '<option value="">— choose team —</option>' + teamsData.filter(t=>t.status==='available').map(t=>`<option value="${t.id}">${t.name}</option>`).join('');
+      vs.innerHTML = '<option value="">— choose victim —</option>' + victimsData.filter(v=>['waiting','assigned'].includes(v.status)).map(v=>`<option value="${v.id}">${v.name} (${v.triage_category?.toUpperCase()} / ${v.severity_score})</option>`).join('');
+    }
+  }
+}
+
+async function submitReport() {
+  const name = document.getElementById('rName').value.trim();
+  const errEl = document.getElementById('reportError');
+  if (!name) { errEl.textContent = 'Patient name is required.'; errEl.style.display='block'; return; }
+  errEl.style.display = 'none';
+  const lat = 28.55 + Math.random() * 0.15;
+  const lng = 77.17 + Math.random() * 0.15;
+  const r = await http.post('/api/emergency/report', { name, lat, lng, type: document.getElementById('rType').value, description: document.getElementById('rDesc').value });
+  if (r?.success) {
+    closeModal('reportModal');
+    toast(`Incident reported. Team ${r.data.team?.name || 'unassigned'} dispatched.`, 'success');
+    loadAll();
+  } else {
+    errEl.textContent = r?.error || 'Submission failed.'; errEl.style.display = 'block';
+  }
+}
+
+async function doDispatch() {
+  const teamId = document.getElementById('dTeam').value;
+  const victimId = document.getElementById('dVictim').value;
+  if (!teamId || !victimId) { toast('Select both team and victim.', 'warn'); return; }
+  const r = await http.post('/api/emergency/dispatch', { teamId, victimId });
+  if (r?.success) {
+    const res = document.getElementById('dispatchResult');
+    res.style.display = 'block';
+    res.textContent = `Dispatched! ETA: ${r.data.eta} min — Distance: ${r.data.distance?.toFixed(1)} km`;
+    setTimeout(() => { closeModal('dispatchModal'); loadAll(); }, 2000);
+  } else { toast(r?.error || 'Dispatch failed.', 'error'); }
+}
+
+initMap(28.6139, 77.2090, 12);
+loadAll();
+initSocket({
+  new_victim:           d => { loadAll(); toast(`New victim reported: ${d.victim?.name}`, 'warn'); },
+  team_dispatched:      () => loadAll(),
+  team_position_update: d => { if(mapMarkers['tm_'+d.id]) mapMarkers['tm_'+d.id].setLatLng([d.lat,d.lng]); },
+  team_updated:         () => loadAll(),
+});
+</script>
+</body>
+</html>
